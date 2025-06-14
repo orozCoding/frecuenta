@@ -140,7 +140,7 @@ export default function App() {
           ...it,
           isMarked: isNowMarked,
           lastMarked: !wasMarked ? new Date().toISOString() : it.lastMarked,
-          nextUnmarkDate: calculateNextUnmark(it)
+          nextUnmarkDate: isNowMarked ? calculateNextUnmark(it) : null
         };
       }
       return it;
