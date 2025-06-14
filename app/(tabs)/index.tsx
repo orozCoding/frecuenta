@@ -28,6 +28,8 @@ export default function App() {
     description: '',
     desmarcarTipo: null,
     dayOfWeek: null,
+    monthDayType: null,
+    dayOfMonth: null,
     amountOfDays: '',
     isMarked: false,
     lastMarked: null,
@@ -55,6 +57,8 @@ export default function App() {
       description: '',
       desmarcarTipo: null,
       dayOfWeek: null,
+      monthDayType: null,
+      dayOfMonth: null,
       amountOfDays: '',
       isMarked: false,
       lastMarked: null,
@@ -64,23 +68,46 @@ export default function App() {
 
   const calculateNextUnmark = (state) => {
     const now = new Date();
+
     if (state.desmarcarTipo === 'cada semana') {
-      const daysMap = { lunes: 1, martes: 2, miércoles: 3, jueves: 4, viernes: 5, sábado: 6, domingo: 0 };
-      const targetDay = daysMap[state.dayOfWeek];
-      let diff = (targetDay + 7 - now.getDay()) % 7;
+      let diff = (state.dayOfWeek + 7 - now.getDay()) % 7;
       if (diff === 0) diff = 7;
       now.setDate(now.getDate() + diff);
       return now.toISOString();
     }
+
     if (state.desmarcarTipo === 'cada mes') {
-      now.setMonth(now.getMonth() + 1);
-      now.setDate(parseInt(state.dayOfWeek) || 1);
-      return now.toISOString();
+      let targetDate = new Date(now);
+
+      if (state.monthDayType === 'inicio') {
+        targetDate.setDate(1);
+      } else if (state.monthDayType === 'segundo') {
+        targetDate.setDate(2);
+      } else if (state.monthDayType === 'ultimo') {
+        targetDate = new Date(now.getFullYear(), now.getMonth() + 1, 0); // 0th day = last of prev month
+      } else if (state.monthDayType === 'especifico') {
+        targetDate.setDate(parseInt(state.dayOfMonth || '1'));
+      } else {
+        targetDate.setDate(1); // fallback
+      }
+
+      // If the target date is before or same as now, move to next month
+      if (targetDate <= now) {
+        if (state.monthDayType === 'ultimo') {
+          targetDate = new Date(now.getFullYear(), now.getMonth() + 2, 0); // end of next month
+        } else {
+          targetDate.setMonth(targetDate.getMonth() + 1);
+        }
+      }
+
+      return targetDate.toISOString();
     }
+
     if (state.desmarcarTipo === 'cada tantos días') {
       now.setDate(now.getDate() + parseInt(state.amountOfDays || '1'));
       return now.toISOString();
     }
+
     return null;
   };
 
@@ -134,8 +161,6 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      <Button title="Añadir ítem" onPress={() => setModalVisible(true)} />
-
       <FlatList
         data={items}
         keyExtractor={item => item.id}
@@ -162,6 +187,22 @@ export default function App() {
         onClose={() => setViewModalVisible(false)}
         onEdit={() => openEditModal(editingItem)}
       />
+
+      <Button title="Añadir elemento" onPress={() => setModalVisible(true)} />
+
+      {__DEV__ && (
+        <View style={{ marginTop: 10 }}>
+          <Button
+            title="🧹 Clear Data (DEV)"
+            color="red"
+            onPress={async () => {
+              await AsyncStorage.removeItem(STORAGE_KEY);
+              setItems([]);
+              console.log('Data cleared');
+            }}
+          />
+        </View>
+      )}
     </View>
   );
 }
@@ -174,7 +215,6 @@ const TodoItem = ({ item, onToggleMark, onView }) => (
     <View style={{ flex: 1 }}>
       <Text style={styles.itemTitle}>{item.title || '(Sin título)'}</Text>
       <Text style={styles.itemDesc} numberOfLines={1}>{item.description}</Text>
-      <Text style={styles.meta}>Marcado: {item.lastMarked ? new Date(item.lastMarked).toLocaleString() : 'Nunca'}</Text>
       {item.nextUnmarkDate && (
         <Text style={styles.meta}>Próximo desmarque: {new Date(item.nextUnmarkDate).toLocaleString()}</Text>
       )}
@@ -187,7 +227,7 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
     <View style={styles.modalContainer}>
       <View style={styles.modalContent}>
         <ScrollView>
-          <Text style={styles.modalTitle}>{formState.id ? 'Editar ítem' : 'Nuevo ítem'}</Text>
+          <Text style={styles.modalTitle}>{formState.id ? 'Editar elemento' : 'Nuevo elemento'}</Text>
 
           <TextInput
             style={styles.input}
@@ -232,13 +272,13 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
               <Dropdown
                 style={styles.dropdown}
                 data={[
-                  { label: 'Lunes', value: 'lunes' },
-                  { label: 'Martes', value: 'martes' },
-                  { label: 'Miércoles', value: 'miércoles' },
-                  { label: 'Jueves', value: 'jueves' },
-                  { label: 'Viernes', value: 'viernes' },
-                  { label: 'Sábado', value: 'sábado' },
-                  { label: 'Domingo', value: 'domingo' },
+                  { label: 'Lunes', value: 1 },
+                  { label: 'Martes', value: 2 },
+                  { label: 'Miércoles', value: 3 },
+                  { label: 'Jueves', value: 4 },
+                  { label: 'Viernes', value: 5 },
+                  { label: 'Sábado', value: 6 },
+                  { label: 'Domingo', value: 7 },
                 ]}
                 labelField="label"
                 valueField="value"
@@ -251,16 +291,43 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
 
           {formState.desmarcarTipo === 'cada mes' && (
             <>
-              <Text style={styles.label}>Día del mes (1-31)</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="numeric"
-                value={formState.dayOfWeek}
-                onChangeText={text => setFormState({ ...formState, dayOfWeek: text })}
-                placeholder="Ej: 15"
+              <Text style={styles.label}>Día del mes</Text>
+              <Dropdown
+                style={styles.dropdown}
+                data={[
+                  { label: 'Inicio del mes', value: 'inicio' },
+                  { label: 'Segundo día del mes', value: 'segundo' },
+                  { label: 'Último día del mes', value: 'ultimo' },
+                  { label: 'Día específico', value: 'especifico' }
+                ]}
+                labelField="label"
+                valueField="value"
+                placeholder="Selecciona una opción"
+                value={formState.monthDayType}
+                onChange={item => setFormState({
+                  ...formState,
+                  monthDayType: item.value,
+                  dayOfMonth: null // reset if switching
+                })}
               />
+
+              {formState.monthDayType === 'especifico' && (
+                <Dropdown
+                  style={styles.dropdown}
+                  data={Array.from({ length: 31 }, (_, i) => ({
+                    label: `${i + 1}`,
+                    value: (i + 1).toString()
+                  }))}
+                  labelField="label"
+                  valueField="value"
+                  placeholder="Selecciona el día"
+                  value={formState.dayOfMonth}
+                  onChange={item => setFormState({ ...formState, dayOfMonth: item.value })}
+                />
+              )}
             </>
           )}
+
 
           {formState.desmarcarTipo === 'cada tantos días' && (
             <>
@@ -321,6 +388,7 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 10,
     paddingTop: 50,
+    paddingBottom: 100,
   },
   itemRow: {
     flexDirection: 'row',
@@ -330,7 +398,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   checkbox: {
-    marginRight: 10,
+    width: 40
   },
   itemTitle: {
     fontWeight: 'bold',
