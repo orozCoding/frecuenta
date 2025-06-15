@@ -13,17 +13,24 @@ import {
 } from 'react-native';
 import { Dropdown } from 'react-native-element-dropdown';
 
-const STORAGE_KEY = '@todo_items';
+const ITEMS_STORAGE_KEY = '@todo_items';
+const CATEGORIES_STORAGE_KEY = '@todo_categories';
 
 export default function App() {
-  const [items, setItems] = useState([]);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [viewModalVisible, setViewModalVisible] = useState(false);
+  const [items, setItems] = useState([]); // items without category
+  const [itemFormModalVisible, setItemFormModalVisible] = useState(false);
+  const [itemDetailsModalVisible, setItemDetailsModalVisible] = useState(false);
+
+  const [categories, setCategories] = useState([]);
+  const [categoryFormModalVisible, setCategoryFormModalVisible] = useState(false);
+
   const [editingItem, setEditingItem] = useState(null);
 
   // Form states
-  const [formState, setFormState] = useState({
+  const initialItemState = {
     id: null,
+    position: null,
+    categoryId: null,
     title: '',
     description: '',
     desmarcarTipo: null,
@@ -32,38 +39,56 @@ export default function App() {
     dayOfMonth: null,
     amountOfDays: '',
     isMarked: false,
-    lastMarked: null,
+    lastMarkedDate: null,
     nextUnmarkDate: null
-  });
+  };
+
+  const [itemFormState, setItemFormState] = useState(initialItemState);
+
+  // Category Form State
+  const initialCategoryState = {
+    id: null,
+    position: null,
+    title: '',
+    visible: true,
+  };
+
+  const [categoryFormState, setCategoryFormState] = useState(initialCategoryState);
 
   useEffect(() => {
     loadItems();
   }, []);
 
+  useEffect(() => {
+    if (__DEV__) {
+      console.log('ITEMS', items);
+      console.log('CATEGORIES', categories);
+    }
+  }, [items, categories]);
+
   const loadItems = async () => {
-    const data = await AsyncStorage.getItem(STORAGE_KEY);
-    if (data) setItems(JSON.parse(data));
+    const categories = await AsyncStorage.getItem(CATEGORIES_STORAGE_KEY);
+    const items = await AsyncStorage.getItem(ITEMS_STORAGE_KEY);
+    if (items) setItems(JSON.parse(items));
+    if (categories) setCategories(JSON.parse(categories));
   };
 
   const saveItems = async (newItems) => {
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newItems));
+    await AsyncStorage.setItem(ITEMS_STORAGE_KEY, JSON.stringify(newItems));
     setItems(newItems);
   };
 
-  const resetForm = () => {
-    setFormState({
-      id: null,
-      title: '',
-      description: '',
-      desmarcarTipo: null,
-      dayOfWeek: null,
-      monthDayType: null,
-      dayOfMonth: null,
-      amountOfDays: '',
-      isMarked: false,
-      lastMarked: null,
-      nextUnmarkDate: null
-    });
+  const saveCategories = async (newCategories) => {
+    await AsyncStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(newCategories));
+    setCategories(newCategories);
+  };
+
+  const resetItemForm = () => {
+    setItemFormState(initialItemState);
+  };
+
+  const resetCategoryForm = () => {
+    setCategoryFormState(initialCategoryState);
   };
 
   const calculateNextUnmark = (state) => {
@@ -111,27 +136,66 @@ export default function App() {
     return null;
   };
 
-  const handleSave = () => {
+  const handleItemSave = () => {
     const updatedState = {
-      ...formState,
-      lastMarked: formState.isMarked ? new Date().toISOString() : null,
-      nextUnmarkDate: formState.isMarked ? calculateNextUnmark(formState) : null
+      ...itemFormState,
+      lastMarkedDate: itemFormState.isMarked ? new Date().toISOString() : null,
+      nextUnmarkDate: itemFormState.isMarked ? calculateNextUnmark(itemFormState) : null
     };
 
     let newItems = [];
-    if (formState.id) {
-      newItems = items.map(it => it.id === formState.id ? updatedState : it);
+    if (itemFormState.id) {
+      newItems = items.map(it => it.id === itemFormState.id ? updatedState : it);
     } else {
       updatedState.id = Date.now().toString();
       newItems = [...items, updatedState];
     }
 
-    saveItems(newItems);
-    resetForm();
-    setModalVisible(false);
+    // After an item is created or updated
+    // we need to update the categories
+    // because we don't know which category was selected
+    const newCategories = categoriesFromItems(newItems);
+    const itemsWithoutCategory = newItems.filter(item => !item.categoryId);
+
+    saveCategories(newCategories);
+    saveItems(itemsWithoutCategory);
+    resetItemForm();
+    setItemFormModalVisible(false);
   };
 
-  const toggleMark = (id) => {
+  const categoriesFromItems = (items) => {
+    return categories.map(category => {
+      const itemsInCategory = items.filter(item => item.categoryId === category.id);
+      return {
+        ...category,
+        items: itemsInCategory
+      }
+    })
+  };
+
+  const handleCategorySave = () => {
+    let newCategories = [...categories]
+    const updatedState = categoryFormState
+    if (categoryFormState.id) {
+      newCategories = categories.map(category => category.id === updatedState.id ? updatedState : category);
+    } else {
+      updatedState.id = Date.now().toString();
+      newCategories = [...categories, updatedState];
+    }
+
+    saveCategories(newCategories)
+    resetCategoryForm();
+    setCategoryFormModalVisible(false);
+  };
+
+  const handleRemove = (id) => {
+    const newItems = items.filter(it => it.id !== id);
+    saveItems(newItems);
+    resetItemForm();
+    setItemDetailsModalVisible(false);
+  };
+
+  const toggleItemMark = (id) => {
     const newItems = items.map(it => {
       if (it.id === id) {
         const wasMarked = it.isMarked;
@@ -139,7 +203,7 @@ export default function App() {
         return {
           ...it,
           isMarked: isNowMarked,
-          lastMarked: !wasMarked ? new Date().toISOString() : it.lastMarked,
+          lastMarkedDate: !wasMarked ? new Date().toISOString() : it.lastMarkedDate,
           nextUnmarkDate: isNowMarked ? calculateNextUnmark(it) : null
         };
       }
@@ -148,47 +212,72 @@ export default function App() {
     saveItems(newItems);
   };
 
-  const openViewModal = (item) => {
+  const openItemDetailsModal = (item) => {
     setEditingItem(item);
-    setViewModalVisible(true);
+    setItemFormModalVisible(false);
+    setItemDetailsModalVisible(true);
   };
 
-  const openEditModal = (item) => {
-    setFormState({ ...item });
-    setViewModalVisible(false);
-    setModalVisible(true);
+  const openItemFormModal = (item) => {
+    setItemFormState({ ...item });
+    setItemDetailsModalVisible(false);
+    setItemFormModalVisible(true);
+  };
+
+  const openCategoryFormModal = (category) => {
+    setCategoryFormState({ ...category });
+    setCategoryFormModalVisible(true);
   };
 
   return (
     <View style={styles.container}>
+      {/* Items without category */}
       <FlatList
         data={items}
         keyExtractor={item => item.id}
         renderItem={({ item }) => (
           <TodoItem
             item={item}
-            onToggleMark={() => toggleMark(item.id)}
-            onView={() => openViewModal(item)}
+            onToggleMark={() => toggleItemMark(item.id)}
+            onView={() => openItemDetailsModal(item)}
           />
         )}
       />
 
-      <FormModal
-        visible={modalVisible}
-        onClose={() => { resetForm(); setModalVisible(false); }}
-        formState={formState}
-        setFormState={setFormState}
-        onSave={handleSave}
+      {categories.map(category => (
+        <Category
+          key={category.id}
+          category={category}
+          toggleItemMark={toggleItemMark}
+          openItemDetailsModal={openItemDetailsModal}
+        />
+      ))}
+
+      <ItemFormModal
+        visible={itemFormModalVisible}
+        onClose={() => { resetItemForm(); setItemFormModalVisible(false); }}
+        itemFormState={itemFormState}
+        setItemFormState={setItemFormState}
+        onSave={handleItemSave}
       />
 
-      <ViewModal
-        visible={viewModalVisible}
+      <ItemDetailsModal
+        visible={itemDetailsModalVisible}
         item={editingItem}
-        onClose={() => setViewModalVisible(false)}
-        onEdit={() => openEditModal(editingItem)}
+        onClose={() => setItemDetailsModalVisible(false)}
+        onEdit={() => openItemFormModal(editingItem)}
       />
 
-      <Button title="Añadir elemento" onPress={() => setModalVisible(true)} />
+      <CategoryFormModal
+        visible={categoryFormModalVisible}
+        onClose={() => { resetCategoryForm(); setCategoryFormModalVisible(false); }}
+        categoryFormState={categoryFormState}
+        setCategoryFormState={setCategoryFormState}
+        onSave={handleCategorySave}
+      />
+
+      <Button title="Añadir categoría" onPress={() => setCategoryFormModalVisible(true)} />
+      <Button title="Añadir elemento" onPress={() => setItemFormModalVisible(true)} />
 
       {__DEV__ && (
         <View style={{ marginTop: 10 }}>
@@ -196,7 +285,7 @@ export default function App() {
             title="🧹 Clear Data (DEV)"
             color="red"
             onPress={async () => {
-              await AsyncStorage.removeItem(STORAGE_KEY);
+              await AsyncStorage.removeItem(ITEMS_STORAGE_KEY);
               setItems([]);
               console.log('Data cleared');
             }}
@@ -205,6 +294,14 @@ export default function App() {
       )}
     </View>
   );
+}
+
+const dateToHuman = (date) => {
+  return new Date(date).toLocaleDateString('es-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric'
+  })
 }
 
 const TodoItem = ({ item, onToggleMark, onView }) => (
@@ -216,31 +313,56 @@ const TodoItem = ({ item, onToggleMark, onView }) => (
       <Text style={styles.itemTitle}>{item.title || '(Sin título)'}</Text>
       <Text style={styles.itemDesc} numberOfLines={1}>{item.description}</Text>
       {item.nextUnmarkDate && (
-        <Text style={styles.meta}>Próximo desmarque: {new Date(item.nextUnmarkDate).toLocaleString()}</Text>
+        <View style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
+          <Text style={styles.meta}>Se desmarcará el </Text>
+          <Text style={{ fontSize: 10, color: '#999', fontWeight: 'bold'}}>{dateToHuman(item.lastMarkedDate)}</Text>
+        </View>
       )}
     </View>
   </TouchableOpacity>
 );
 
-const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
+
+const Category = ({ category, toggleItemMark, openItemDetailsModal }) => (
+  <View>
+    <TouchableOpacity onPress={() => category.visible = !category.visible}>
+      <Text style={{ fontSize: 18, fontWeight: 'bold' }}>
+        {category.title}
+      </Text>
+      <FlatList
+        data={category.items}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => (
+          <TodoItem
+            item={item}
+            onToggleMark={() => toggleItemMark(item.id)}
+            onView={() => openItemDetailsModal(item)}
+          />
+        )}
+      />
+    </TouchableOpacity> 
+  </View>
+);
+
+const ItemFormModal = ({ visible, onClose, itemFormState, setItemFormState, onSave }) => (
   <Modal visible={visible} animationType="slide" transparent={true}>
     <View style={styles.modalContainer}>
       <View style={styles.modalContent}>
         <ScrollView>
-          <Text style={styles.modalTitle}>{formState.id ? 'Editar elemento' : 'Nuevo elemento'}</Text>
+          <Text style={styles.modalTitle}>{itemFormState.id ? 'Editar elemento' : 'Nuevo elemento'}</Text>
 
           <TextInput
             style={styles.input}
             placeholder="Título (opcional)"
-            value={formState.title}
-            onChangeText={text => setFormState({ ...formState, title: text })}
+            value={itemFormState.title}
+            onChangeText={text => setItemFormState({ ...itemFormState, title: text })}
           />
 
           <TextInput
             style={styles.input}
             placeholder="Descripción (opcional)"
-            value={formState.description}
-            onChangeText={text => setFormState({ ...formState, description: text })}
+            value={itemFormState.description}
+            onChangeText={text => setItemFormState({ ...itemFormState, description: text })}
           />
 
           <Text style={styles.label}>¿Cuándo desmarcar?</Text>
@@ -255,10 +377,10 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
             labelField="label"
             valueField="value"
             placeholder="Selecciona una opción"
-            value={formState.desmarcarTipo}
+            value={itemFormState.desmarcarTipo}
             onChange={item => {
-              setFormState({ 
-                ...formState, 
+              setItemFormState({ 
+                ...itemFormState, 
                 desmarcarTipo: item.value, 
                 dayOfWeek: null, 
                 amountOfDays: '' 
@@ -266,7 +388,7 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
             }}
           />
 
-          {formState.desmarcarTipo === 'cada semana' && (
+          {itemFormState.desmarcarTipo === 'cada semana' && (
             <>
               <Text style={styles.label}>Día de la semana</Text>
               <Dropdown
@@ -283,13 +405,13 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
                 labelField="label"
                 valueField="value"
                 placeholder="Selecciona el día"
-                value={formState.dayOfWeek}
-                onChange={item => setFormState({ ...formState, dayOfWeek: item.value })}
+                value={itemFormState.dayOfWeek}
+                onChange={item => setItemFormState({ ...itemFormState, dayOfWeek: item.value })}
               />
             </>
           )}
 
-          {formState.desmarcarTipo === 'cada mes' && (
+          {itemFormState.desmarcarTipo === 'cada mes' && (
             <>
               <Text style={styles.label}>Día del mes</Text>
               <Dropdown
@@ -303,15 +425,15 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
                 labelField="label"
                 valueField="value"
                 placeholder="Selecciona una opción"
-                value={formState.monthDayType}
-                onChange={item => setFormState({
-                  ...formState,
+                value={itemFormState.monthDayType}
+                onChange={item => setItemFormState({
+                  ...itemFormState,
                   monthDayType: item.value,
                   dayOfMonth: null // reset if switching
                 })}
               />
 
-              {formState.monthDayType === 'especifico' && (
+              {itemFormState.monthDayType === 'especifico' && (
                 <Dropdown
                   style={styles.dropdown}
                   data={Array.from({ length: 31 }, (_, i) => ({
@@ -321,31 +443,33 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
                   labelField="label"
                   valueField="value"
                   placeholder="Selecciona el día"
-                  value={formState.dayOfMonth}
-                  onChange={item => setFormState({ ...formState, dayOfMonth: item.value })}
+                  value={itemFormState.dayOfMonth}
+                  onChange={item => setItemFormState({ ...itemFormState, dayOfMonth: item.value })}
                 />
               )}
             </>
           )}
 
 
-          {formState.desmarcarTipo === 'cada tantos días' && (
+          {itemFormState.desmarcarTipo === 'cada tantos días' && (
             <>
               <Text style={styles.label}>Número de días</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="numeric"
-                value={formState.amountOfDays}
-                onChangeText={text => setFormState({ ...formState, amountOfDays: text })}
+                value={itemFormState.amountOfDays}
+                onChangeText={text => setItemFormState({ ...itemFormState, amountOfDays: text })}
                 placeholder="Ej: 10"
               />
             </>
           )}
 
-          <Text style={styles.label}>Estado</Text>
-          <TouchableOpacity onPress={() => setFormState({ ...formState, isMarked: !formState.isMarked })} style={styles.checkbox}>
-            <Text>{formState.isMarked ? '✅ Marcado' : '⬜ Desmarcado'}</Text>
-          </TouchableOpacity>
+          <View>
+            <Text style={styles.label}>Estado</Text>
+            <TouchableOpacity onPress={() => setItemFormState({ ...itemFormState, isMarked: !itemFormState.isMarked })} style={{ display: 'flex', flexDirection: 'row', alignItems: 'center' }}>
+              <Text>{itemFormState.isMarked ? '✅ Marcado' : '⬜ Desmarcado'}</Text>
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.buttonRow}>
             <Button title="Guardar" onPress={onSave} />
@@ -357,7 +481,31 @@ const FormModal = ({ visible, onClose, formState, setFormState, onSave }) => (
   </Modal>
 );
 
-const ViewModal = ({ visible, item, onClose, onEdit }) => (
+const CategoryFormModal = ({ visible, onClose, categoryFormState, setCategoryFormState, onSave }) => (
+  <Modal visible={visible} animationType="slide" transparent={true}>
+    <View style={styles.modalContainer}>
+      <View style={styles.modalContent}>
+        <ScrollView>
+          <Text style={styles.modalTitle}>{categoryFormState.id ? 'Editar categoría' : 'Nuevo categoría'}</Text>
+
+          <TextInput
+            style={styles.input}
+            placeholder="Título"
+            value={categoryFormState.title}
+            onChangeText={text => setCategoryFormState({ ...categoryFormState, title: text })}
+          />
+
+          <View style={styles.buttonRow}>
+            <Button title="Guardar" onPress={onSave} />
+            <Button title="Cancelar" onPress={onClose} />
+          </View>
+        </ScrollView>
+      </View>
+    </View>
+  </Modal>
+);
+
+const ItemDetailsModal = ({ visible, item, onClose, onEdit }) => (
   <Modal visible={visible} animationType="fade" transparent={true}>
     <View style={styles.modalContainer}>
       <View style={styles.modalContent}>
@@ -366,7 +514,7 @@ const ViewModal = ({ visible, item, onClose, onEdit }) => (
             <Text style={styles.modalTitle}>{item.title || '(Sin título)'}</Text>
             <Text style={{ marginBottom: 10 }}>{item.description}</Text>
             <Text style={styles.meta}>Desmarcar: {item.desmarcarTipo}</Text>
-            <Text style={styles.meta}>Marcado: {item.lastMarked ? new Date(item.lastMarked).toLocaleString() : 'Nunca'}</Text>
+            <Text style={styles.meta}>Marcado: {item.lastMarkedDate ? new Date(item.lastMarkedDate).toLocaleString() : 'Nunca'}</Text>
             {item.nextUnmarkDate && (
               <Text style={styles.meta}>Próximo desmarque: {new Date(item.nextUnmarkDate).toLocaleString()}</Text>
 
